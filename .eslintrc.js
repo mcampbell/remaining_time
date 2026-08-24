@@ -26,6 +26,12 @@ module.exports = {
         '@typescript-eslint/no-use-before-define': 'off',
         'no-undef': 'off'
       }
+    },
+    {
+      files: ['tests-js/**/*.ts'],
+      parserOptions: {
+        project: './tsconfig.test.json'
+      }
     }
   ],
   globals: {

@@ -11,7 +11,8 @@ import { getCurrentDeckName, getDeckRates, RateState } from './utils/deckRate'
 import { isAnkiDroid } from './utils/apiAnkiDroid'
 import { debugLog } from './utils/debugLog'
 
-const historyDecay = 1 / 1.005
+// Short-window EMA: N=7 samples of memory, decay = (N-1)/(N+1).
+const historyDecay = 6 / 8
 const minimumRate = 1e-6
 
 export interface LogEntry {
@@ -21,30 +22,7 @@ export interface LogEntry {
   reviewHash: number | null; // May be null to save spaces on ankidroid
 }
 
-// Anki's own nu/lrn/rev counts are coupled (answering a new card can inject
-// a learning-queue entry, a review lapse can too), and lrn's count in
-// particular isn't a stable "work remaining" figure - it gets replenished by
-// nu/rev processing rather than draining monotonically. So the ETA is only
-// budgeted from new and review pace; lrn is deliberately excluded (see the
-// anchor-skipping comment on anchorEpochBefore for how its time is still
-// accounted for without needing its count).
-export type RateCategory = 'new' | 'rev'
-
-export function categoryForLogType (logType: InstLogType): RateCategory | null {
-  switch (logType) {
-    case 'new':
-      return 'new'
-    case 'rev-good':
-    case 'rev-again':
-      return 'rev'
-    case 'good':
-    case 'again':
-    case 'unknown':
-      return null
-  }
-}
-
-const ESTIMATOR_SCHEMA_VERSION = 4
+const ESTIMATOR_SCHEMA_VERSION = 5
 
 // How many of the most recent log entries keep their reviewHash on
 // serialization. Only mobileReviewLogger ever reads a persisted reviewHash
@@ -104,7 +82,7 @@ export const kRtEstimatorSchema = '__rt__estimator__schema__'
 
 interface EstimatorInitializer {
   reviewTimeCutoff: number;
-  rates: Record<RateCategory, RateState>;
+  rates: RateState;
 }
 
 function emptyRateState (): RateState {
@@ -113,13 +91,14 @@ function emptyRateState (): RateState {
 
 export class Estimator {
   logs: LogEntry[] = []
-  // A pure exponential smoother's raw accumulator per category, decayed on
-  // every real sample regardless of which sitting it happened in. This is
-  // the same object the persisted per-deck rate is loaded into and saved
-  // from (see updater.ts) - there's no separate "seed" concept blended in
+  // A pure exponential smoother's raw accumulator (decayed weighted
+  // seconds / decayed weighted count), blended across every answered card
+  // regardless of new/lrn/rev or which sitting it happened in. This is the
+  // same object the persisted per-deck rate is loaded into and saved from
+  // (see updater.ts) - there's no separate "seed" concept blended in
   // through a second, differently-tuned smoother; continuing to decay this
   // state across a sitting boundary *is* how the rate persists.
-  rates: Record<RateCategory, RateState>
+  rates: RateState
 
   private startTime = now()
   private reviewTimeCutoff: number
@@ -147,42 +126,21 @@ export class Estimator {
     // learned pace, not sitting-scoped state.
   }
 
-  /**
-   * Epoch of the closest new/rev log entry strictly before `beforeIndex`
-   * (skipping lrn entries), or the sitting's start if none exist yet. Used
-   * to fold an lrn interruption's time cost into whichever new/rev card
-   * follows it, rather than needing lrn's own count (which isn't a stable
-   * "work remaining" figure - see the RateCategory comment above). Which of
-   * new/rev absorbs a given lrn interruption is whichever happens to come
-   * next chronologically, not a precise per-category attribution - but Anki
-   * tends to front-load a sitting with a long consecutive run of review
-   * cards before mixing in new ones, so for most of a sitting there's no
-   * real ambiguity; it only becomes an approximation during a genuinely
-   * interleaved stretch, and decayed averaging over many samples smooths
-   * that out.
-   */
-  private anchorEpochBefore (beforeIndex: number): number {
-    for (let i = beforeIndex - 1; i >= 0; i--) {
-      if (categoryForLogType(this.logs[i].logType) !== null) return this.logs[i].epoch
-    }
-    return this.startTime
-  }
-
-  /** Folds one new/rev sample into that category's running pace. */
-  private applyRateSample (category: RateCategory, dt: number) {
-    const state = this.rates[category]
+  /** Folds one sample into the blended running pace. */
+  private applyRateSample (dt: number) {
+    const state = this.rates
     const withinCutoff = dt <= this.reviewTimeCutoff
     const cappedDt = withinCutoff ? dt : this.reviewTimeCutoff
     const oldWeightedTime = state.weightedTime
     const oldWeightedCount = state.weightedCount
     state.weightedTime = state.weightedTime * historyDecay + cappedDt
     state.weightedCount = state.weightedCount * historyDecay + (withinCutoff ? 1 : 0)
-    debugLog(`[applyRateSample] category ${category}, dt ${dt}, weightedTime ${oldWeightedTime} -> ${state.weightedTime}, weightedCount ${oldWeightedCount} -> ${state.weightedCount}`)
+    debugLog(`[applyRateSample] dt ${dt}, weightedTime ${oldWeightedTime} -> ${state.weightedTime}, weightedCount ${oldWeightedCount} -> ${state.weightedCount}`)
   }
 
   /** Exact inverse of applyRateSample, for undo. */
-  private reverseRateSample (category: RateCategory, dt: number) {
-    const state = this.rates[category]
+  private reverseRateSample (dt: number) {
+    const state = this.rates
     const withinCutoff = dt <= this.reviewTimeCutoff
     const cappedDt = withinCutoff ? dt : this.reviewTimeCutoff
     state.weightedTime = (state.weightedTime - cappedDt) / historyDecay
@@ -197,11 +155,7 @@ export class Estimator {
         ? epoch - this.logs[this.logs.length - 1].epoch
         : epoch - this.startTime
 
-    const category = categoryForLogType(logType)
-    if (category) {
-      const anchorEpoch = this.anchorEpochBefore(logLength)
-      this.applyRateSample(category, epoch - anchorEpoch)
-    }
+    this.applyRateSample(dt)
 
     this.logs.push({ reviewHash, epoch, dt, logType })
   }
@@ -210,36 +164,22 @@ export class Estimator {
     const removed = this.logs.pop()
     if (!removed) return
 
-    const category = categoryForLogType(removed.logType)
-    if (category) {
-      const anchorEpoch = this.anchorEpochBefore(this.logs.length)
-      this.reverseRateSample(category, removed.epoch - anchorEpoch)
-    }
+    this.reverseRateSample(removed.dt)
   }
 
-  /** Cards/sec pace for one category (new or review). */
-  getRate (category: RateCategory) {
-    const { weightedTime, weightedCount } = this.rates[category]
+  /** Cards/sec pace, blended across every answered card. */
+  getRate () {
+    const { weightedTime, weightedCount } = this.rates
     // No persisted history and no real data yet - nothing to compute from.
     if (weightedTime <= 0) return minimumRate
     if (weightedTime < 1) return 1
     return Math.max(weightedCount / weightedTime, minimumRate)
   }
 
-  /** New/review remaining counts, each divided by that category's own pace. */
+  /** Total remaining count (new + lrn + rev), divided by the blended pace. */
   getRemainingTime (remainingReviews: RemainingCardCounts) {
-    let newRate = this.getRate('new')
-    let revRate = this.getRate('rev')
-
-    // Maybe user might have done only new cards or review cards till now.
-    // We don't want to show remaining time > day endlessly d/t untouched half.
-    // Do a non-accurate but practical clamping of rates here.
-    if (newRate <= 2 * minimumRate) newRate = Math.max(newRate, revRate * 0.1)
-    if (revRate <= 2 * minimumRate) revRate = Math.max(revRate, newRate)
-
     return (
-      remainingReviews.nu / newRate +
-      remainingReviews.rev / revRate
+      (remainingReviews.nu + remainingReviews.lrn + remainingReviews.rev) / this.getRate()
     )
   }
 
@@ -266,10 +206,7 @@ export class Estimator {
 
     const deckName = await getCurrentDeckName()
     const persistedRates = deckName ? await getDeckRates(deckName) : null
-    const rates: Record<RateCategory, RateState> = {
-      new: persistedRates?.new ?? emptyRateState(),
-      rev: persistedRates?.rev ?? emptyRateState()
-    }
+    const rates: RateState = persistedRates?.rate ?? emptyRateState()
 
     if (!content) Estimator.cache = new Estimator({ reviewTimeCutoff, rates })
     else {

@@ -13,8 +13,7 @@ export interface RateState {
 }
 
 export interface DeckRates {
-  new?: RateState;
-  rev?: RateState;
+  rate?: RateState;
 }
 
 export async function getCurrentDeckName (): Promise<string | null> {
@@ -45,11 +44,10 @@ function sanitizeDeckRates (raw: unknown): DeckRates {
   // old schema (storing raw number instead of object) -> ignore
   if (typeof raw !== 'object' || raw === null) return {}
 
-  const { new: newRate, rev: revRate } = raw as DeckRates
-  return {
-    new: isRateState(newRate) ? newRate : undefined,
-    rev: isRateState(revRate) ? revRate : undefined
-  }
+  const { rate } = raw as DeckRates
+  // old per-category schema (`{new, rev}` instead of `{rate}`) -> treat as
+  // no persisted rate, same defensive spirit as the raw-number case above.
+  return { rate: isRateState(rate) ? rate : undefined }
 }
 
 export async function getDeckRates (deckName: string): Promise<DeckRates | null> {
