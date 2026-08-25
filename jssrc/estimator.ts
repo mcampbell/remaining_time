@@ -11,8 +11,9 @@ import { getCurrentDeckName, getDeckRates, RateState } from './utils/deckRate'
 import { isAnkiDroid } from './utils/apiAnkiDroid'
 import { debugLog } from './utils/debugLog'
 
-// Short-window EMA: N=7 samples of memory, decay = (N-1)/(N+1).
-const historyDecay = 6 / 8
+// Short-window EMA: emaWindowSamples samples of memory, decay = (N-1)/(N+1).
+export const emaWindowSamples = 60
+const historyDecay = (emaWindowSamples - 1) / (emaWindowSamples + 1)
 const minimumRate = 1e-6
 
 export interface LogEntry {

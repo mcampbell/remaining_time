@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as utils from '../jssrc/utils'
 import * as addonConfig from '../jssrc/utils/addonConfig'
-import { Estimator } from '../jssrc/estimator'
+import { Estimator, emaWindowSamples } from '../jssrc/estimator'
 import { InstLogType } from '../jssrc/reviewLogger/types'
 
 // estimator.update()/undo() call debugLog(), which reads addon config via a
@@ -41,7 +41,7 @@ test('blended average converges toward true mean dt across mixed log types', () 
   assert.ok(Math.abs(estimator.getRate() - 0.1) < 1e-6, `rate ${estimator.getRate()} not close to 0.1`)
 })
 
-test('short-window rate recovers close to pre-outlier rate within ~10 samples', () => {
+test('short-window rate recovers close to pre-outlier rate within ~N samples', () => {
   const clock = fakeClock(0)
   const cutoff = 60
   const estimator = newEstimator(cutoff)
@@ -52,7 +52,7 @@ test('short-window rate recovers close to pre-outlier rate within ~10 samples', 
   feed(estimator, clock, 1000, 'good') // outlier, capped by reviewTimeCutoff
   assert.ok(Math.abs(estimator.getRate() - before) > 0.01, 'outlier should visibly perturb rate')
 
-  for (let i = 0; i < 10; i++) feed(estimator, clock, 10, 'good')
+  for (let i = 0; i < emaWindowSamples * 2; i++) feed(estimator, clock, 10, 'good')
   const after = estimator.getRate()
   assert.ok(Math.abs(after - before) / before < 0.1, `rate ${after} did not recover close to ${before}`)
 })
