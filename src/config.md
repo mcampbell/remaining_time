@@ -16,6 +16,10 @@ Set plugin to run also on mobile. *Note) only compatible w/ AnkiDroid.*
 
 Set all segment's width to same. [This has been requested](https://github.com/trgkanki/remaining_time/issues/25), so FYI.
 
+## confirmReset (default: true)
+
+Whether to show a confirmation popup before resetting the progress bar via the reset button. Set to `false` to reset immediately without confirming.
+
 ## autoResetIdleSeconds (default: 18000)
 
 If more than this many seconds have passed since the last review (e.g. resuming reviews the next day), the progress bar automatically resets instead of showing a stale/huge elapsed time. Set to `0` to disable.

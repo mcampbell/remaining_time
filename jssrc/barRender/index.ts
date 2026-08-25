@@ -40,7 +40,8 @@ async function updateDOM (svgHtml: string, progressBarMessage: string) {
   const resetButton = shadowRoot.querySelector('.rt-reset')
   if (!resetButton) return
   const handler = async () => {
-    if (confirm('[Remaining time] Press OK to reset the progress bar.')) {
+    const confirmReset = await getAddonConfig('confirmReset')
+    if (!confirmReset || confirm('[Remaining time] Press OK to reset the progress bar.')) {
       const estimator = await Estimator.instance()
       estimator.reset()
       estimator.resetRates()

@@ -7,6 +7,7 @@
   "resetHotkey": "",
   "runOnMobile": false,
   "fixedSegmentWidth": false,
+  "confirmReset": true,
   "messageFormat": "Elapsed %(elapsedTime),  Remaining %(remainingTime), ETA %(ETA)",
   "barCSS": ""
 }
