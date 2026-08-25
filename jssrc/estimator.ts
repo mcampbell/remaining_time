@@ -11,9 +11,6 @@ import { getCurrentDeckName, getDeckRates, RateState } from './utils/deckRate'
 import { isAnkiDroid } from './utils/apiAnkiDroid'
 import { debugLog } from './utils/debugLog'
 
-// Short-window EMA: emaWindowSamples samples of memory, decay = (N-1)/(N+1).
-export const emaWindowSamples = 60
-const historyDecay = (emaWindowSamples - 1) / (emaWindowSamples + 1)
 const minimumRate = 1e-6
 
 export interface LogEntry {
@@ -83,10 +80,11 @@ export const kRtEstimatorSchema = '__rt__estimator__schema__'
 
 interface EstimatorInitializer {
   reviewTimeCutoff: number;
+  emaWindowSamples: number;
   rates: RateState;
 }
 
-function emptyRateState (): RateState {
+export function emptyRateState (): RateState {
   return { weightedTime: 0, weightedCount: 0 }
 }
 
@@ -103,11 +101,14 @@ export class Estimator {
 
   private startTime = now()
   private reviewTimeCutoff: number
+  // Short-window EMA: emaWindowSamples samples of memory, decay = (N-1)/(N+1).
+  private historyDecay: number
   // eslint-disable-next-line no-use-before-define
   private static cache: Estimator | null = null
 
   constructor (args: EstimatorInitializer) {
     this.reviewTimeCutoff = args.reviewTimeCutoff
+    this.historyDecay = (args.emaWindowSamples - 1) / (args.emaWindowSamples + 1)
     this.rates = args.rates
   }
 
@@ -127,6 +128,13 @@ export class Estimator {
     // learned pace, not sitting-scoped state.
   }
 
+  // Aggressive counterpart to reset(), used only by the manual reset button:
+  // unlike reset(), this discards the deck's long-run learned pace too,
+  // since that's what a user explicitly asking for "a fresh value" wants.
+  resetRates () {
+    this.rates = emptyRateState()
+  }
+
   /** Folds one sample into the blended running pace. */
   private applyRateSample (dt: number) {
     const state = this.rates
@@ -134,8 +142,8 @@ export class Estimator {
     const cappedDt = withinCutoff ? dt : this.reviewTimeCutoff
     const oldWeightedTime = state.weightedTime
     const oldWeightedCount = state.weightedCount
-    state.weightedTime = state.weightedTime * historyDecay + cappedDt
-    state.weightedCount = state.weightedCount * historyDecay + (withinCutoff ? 1 : 0)
+    state.weightedTime = state.weightedTime * this.historyDecay + cappedDt
+    state.weightedCount = state.weightedCount * this.historyDecay + (withinCutoff ? 1 : 0)
     debugLog(`[applyRateSample] dt ${dt}, weightedTime ${oldWeightedTime} -> ${state.weightedTime}, weightedCount ${oldWeightedCount} -> ${state.weightedCount}`)
   }
 
@@ -144,8 +152,8 @@ export class Estimator {
     const state = this.rates
     const withinCutoff = dt <= this.reviewTimeCutoff
     const cappedDt = withinCutoff ? dt : this.reviewTimeCutoff
-    state.weightedTime = (state.weightedTime - cappedDt) / historyDecay
-    state.weightedCount = (state.weightedCount - (withinCutoff ? 1 : 0)) / historyDecay
+    state.weightedTime = (state.weightedTime - cappedDt) / this.historyDecay
+    state.weightedCount = (state.weightedCount - (withinCutoff ? 1 : 0)) / this.historyDecay
   }
 
   update (reviewHash: number, logType: InstLogType) {
@@ -204,12 +212,13 @@ export class Estimator {
     const storage = (isAnkiDroid()) ? localStorage : ankiPersistentStorage
     const content = await storage.getItem(kRtEstimatorSchema)
     const reviewTimeCutoff = (await getAddonConfig('reviewTimeCutoff')) as number
+    const emaWindowSamples = (await getAddonConfig('emaWindowSamples')) as number
 
     const deckName = await getCurrentDeckName()
     const persistedRates = deckName ? await getDeckRates(deckName) : null
     const rates: RateState = persistedRates?.rate ?? emptyRateState()
 
-    if (!content) Estimator.cache = new Estimator({ reviewTimeCutoff, rates })
+    if (!content) Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates })
     else {
       try {
         const s = JSON.parse(pakob64Inflate(content))
@@ -217,7 +226,7 @@ export class Estimator {
         if (s[cursor++] !== ESTIMATOR_SCHEMA_VERSION) {
           throw new Error('Old schema')
         }
-        const obj = new Estimator({ reviewTimeCutoff, rates })
+        const obj = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates })
         obj.startTime = s[cursor++]
         const deserialized = deserializeLogs(s, cursor, obj.startTime)
         obj.logs = deserialized.logs
@@ -229,7 +238,7 @@ export class Estimator {
         // re-update elapsed time
         Estimator.cache = obj
       } catch {
-        Estimator.cache = new Estimator({ reviewTimeCutoff, rates })
+        Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates })
       }
     }
     return Estimator.cache

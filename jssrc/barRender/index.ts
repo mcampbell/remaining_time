@@ -1,6 +1,7 @@
-import { Estimator } from '../estimator'
+import { Estimator, emptyRateState } from '../estimator'
 import { getRemainingReviews } from '../utils'
 import { getAddonConfig } from '../utils/addonConfig'
+import { getCurrentDeckName, saveDeckRates } from '../utils/deckRate'
 import { getMessage } from './message'
 import { getSVG } from './svg'
 import { injectCSS } from './injectCSS'
@@ -42,6 +43,11 @@ async function updateDOM (svgHtml: string, progressBarMessage: string) {
     if (confirm('[Remaining time] Press OK to reset the progress bar.')) {
       const estimator = await Estimator.instance()
       estimator.reset()
+      estimator.resetRates()
+      const deckName = await getCurrentDeckName()
+      if (deckName) {
+        await saveDeckRates(deckName, { rate: emptyRateState() })
+      }
       estimator.save()
       renderProgressBar()
     }
