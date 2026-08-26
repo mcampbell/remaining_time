@@ -59,6 +59,27 @@ test('short-window rate recovers close to pre-outlier rate within ~N samples', (
   assert.ok(Math.abs(after - before) / before < 0.1, `rate ${after} did not recover close to ${before}`)
 })
 
+test('a capped outlier sample still counts as one ordinary sample (regression for capped-but-uncounted bug)', () => {
+  // Regression guard: applyRateSample used to do
+  // `state.weightedCount += withinCutoff ? 1 : 0`, so a dt over
+  // reviewTimeCutoff added capped time with NO matching count, starving the
+  // rate. It must now always add exactly 1 to weightedCount, capped or not.
+  const clock = fakeClock(0)
+  const decay = (testWindow - 1) / (testWindow + 1) // (7-1)/(7+1) = 0.75
+  const cutoff = 60
+  const estimator = new Estimator({ reviewTimeCutoff: cutoff, emaWindowSamples: testWindow, rates: { weightedTime: 100, weightedCount: 10 } })
+
+  feed(estimator, clock, 1000, 'good') // dt >> cutoff, so cappedDt = 60
+
+  const expectedWeightedTime = 100 * decay + 60 // 135
+  const expectedWeightedCount = 10 * decay + 1 // 8.5 (old buggy code: 10*decay+0 = 7.5)
+  const expectedRate = expectedWeightedCount / expectedWeightedTime // 8.5/135
+
+  assert.ok(Math.abs(estimator.rates.weightedTime - expectedWeightedTime) < 1e-9)
+  assert.ok(Math.abs(estimator.rates.weightedCount - expectedWeightedCount) < 1e-9)
+  assert.ok(Math.abs(estimator.getRate() - expectedRate) < 1e-9, `rate ${estimator.getRate()} !== ${expectedRate}`)
+})
+
 test('lrn-only remaining reviews produce a non-zero ETA', () => {
   const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { weightedTime: 10, weightedCount: 1 } })
   const eta = estimator.getRemainingTime({ nu: 0, lrn: 5, rev: 0 })

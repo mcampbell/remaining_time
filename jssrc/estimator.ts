@@ -135,25 +135,32 @@ export class Estimator {
     this.rates = emptyRateState()
   }
 
-  /** Folds one sample into the blended running pace. */
+  /**
+   * Folds one sample into the blended running pace. dt is the raw elapsed
+   * time between this card and the previous one - nothing else is folded
+   * in. Clamped to reviewTimeCutoff (a real gap longer than that is
+   * scheduler/AFK wait time, not review pace) but still counted as one
+   * ordinary sample of that clamped duration - crediting only the capped
+   * time without incrementing the count would silently starve the rate
+   * for that instant (time added, nothing to show for it), spiking the
+   * displayed ETA right after any long gap.
+   */
   private applyRateSample (dt: number) {
     const state = this.rates
-    const withinCutoff = dt <= this.reviewTimeCutoff
-    const cappedDt = withinCutoff ? dt : this.reviewTimeCutoff
+    const cappedDt = Math.min(dt, this.reviewTimeCutoff)
     const oldWeightedTime = state.weightedTime
     const oldWeightedCount = state.weightedCount
     state.weightedTime = state.weightedTime * this.historyDecay + cappedDt
-    state.weightedCount = state.weightedCount * this.historyDecay + (withinCutoff ? 1 : 0)
+    state.weightedCount = state.weightedCount * this.historyDecay + 1
     debugLog(`[applyRateSample] dt ${dt}, weightedTime ${oldWeightedTime} -> ${state.weightedTime}, weightedCount ${oldWeightedCount} -> ${state.weightedCount}`)
   }
 
   /** Exact inverse of applyRateSample, for undo. */
   private reverseRateSample (dt: number) {
     const state = this.rates
-    const withinCutoff = dt <= this.reviewTimeCutoff
-    const cappedDt = withinCutoff ? dt : this.reviewTimeCutoff
+    const cappedDt = Math.min(dt, this.reviewTimeCutoff)
     state.weightedTime = (state.weightedTime - cappedDt) / this.historyDecay
-    state.weightedCount = (state.weightedCount - (withinCutoff ? 1 : 0)) / this.historyDecay
+    state.weightedCount = (state.weightedCount - 1) / this.historyDecay
   }
 
   update (reviewHash: number, logType: InstLogType) {
