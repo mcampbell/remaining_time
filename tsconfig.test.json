@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2019",
+    "outDir": "dist-test",
+    "sourceMap": false,
+    "types": ["node"]
+  },
+  "include": [
+    "jssrc/**/*.ts",
+    "tests-js/**/*.ts"
+  ]
+}

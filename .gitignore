@@ -430,3 +430,6 @@ meta.json
 # .min.js is a compiled thing
 *.min.js
 *.js.map
+
+# JS test compilation output
+dist-test/

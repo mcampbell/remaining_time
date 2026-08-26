@@ -3,9 +3,11 @@
   "showAtBottom": false,
   "autoResetIdleSeconds": 18000,
   "reviewTimeCutoff": 300,
+  "emaWindowSamples": 60,
   "resetHotkey": "",
   "runOnMobile": false,
   "fixedSegmentWidth": false,
+  "confirmReset": true,
   "messageFormat": "Elapsed %(elapsedTime),  Remaining %(remainingTime), ETA %(ETA)",
   "barCSS": ""
 }

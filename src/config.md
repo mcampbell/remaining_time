@@ -16,6 +16,10 @@ Set plugin to run also on mobile. *Note) only compatible w/ AnkiDroid.*
 
 Set all segment's width to same. [This has been requested](https://github.com/trgkanki/remaining_time/issues/25), so FYI.
 
+## confirmReset (default: true)
+
+Whether to show a confirmation popup before resetting the progress bar via the reset button. Set to `false` to reset immediately without confirming.
+
 ## autoResetIdleSeconds (default: 18000)
 
 If more than this many seconds have passed since the last review (e.g. resuming reviews the next day), the progress bar automatically resets instead of showing a stale/huge elapsed time. Set to `0` to disable.
@@ -24,6 +28,10 @@ If more than this many seconds have passed since the last review (e.g. resuming 
 
 Every review taking too much time will be clampped to `reviewTimeCutoff` (seconds). Some outliers may influence the ETA too much.
 Use this option to filter out the outliers.
+
+## emaWindowSamples (default: 60)
+
+Number of recent card answers the "time per card" estimate is smoothed over. A bigger number reacts more slowly to a change in your pace but is less twitchy/noisy; a smaller number reacts faster but is jumpier. Accepts any positive number (need not be an integer, though in practice it will be).
 
 ## resetHotkey (default: "")
 

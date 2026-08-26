@@ -1,7 +1,7 @@
-import { Estimator, RateCategory, categoryForLogType } from './estimator'
+import { Estimator } from './estimator'
 import { EstimatorInst, RCCTConst } from './reviewLogger/types'
 import { getReviewLogger } from './reviewLogger'
-import { getCurrentDeckName, saveDeckRates, DeckRates } from './utils/deckRate'
+import { getCurrentDeckName, saveDeckRates } from './utils/deckRate'
 import { debugLog } from './utils/debugLog'
 
 function applyInstruction (estimator: Estimator, instruction: EstimatorInst) {
@@ -34,21 +34,11 @@ export async function updateEstimator () {
   }
   estimator.save()
 
-  const touchedCategories = new Set<RateCategory>()
-  for (const instruction of instructions) {
-    if (instruction.instType !== RCCTConst.UPDATE) continue
-    const category = categoryForLogType(instruction.logType)
-    if (category) touchedCategories.add(category)
-  }
-
-  if (touchedCategories.size > 0) {
+  const anyUpdated = instructions.some(instruction => instruction.instType === RCCTConst.UPDATE)
+  if (anyUpdated) {
     const deckName = await getCurrentDeckName()
     if (deckName) {
-      const newRates: DeckRates = {}
-      for (const category of touchedCategories) {
-        newRates[category] = estimator.rates[category]
-      }
-      await saveDeckRates(deckName, newRates)
+      await saveDeckRates(deckName, { rate: estimator.rates })
     }
   }
 }
