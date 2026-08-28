@@ -23,9 +23,10 @@ function fakeClock (startEpoch: number) {
 }
 
 const testWindow = 7
+const testAlpha = 2 / (testWindow + 1) // 0.25
 
 function newEstimator (reviewTimeCutoff: number) {
-  return new Estimator({ reviewTimeCutoff, emaWindowSamples: testWindow, rates: { weightedTime: 0, weightedCount: 0 } })
+  return new Estimator({ reviewTimeCutoff, emaWindowSamples: testWindow, rates: { emaSeconds: null } })
 }
 
 function feed (estimator: Estimator, clock: { advance: (dt: number) => void }, dt: number, logType: InstLogType) {
@@ -53,62 +54,112 @@ test('short-window rate recovers close to pre-outlier rate within ~N samples', (
 
   feed(estimator, clock, 1000, 'good') // outlier, capped by reviewTimeCutoff
   assert.ok(Math.abs(estimator.getRate() - before) > 0.01, 'outlier should visibly perturb rate')
+  const afterOutlierEma = estimator.rates.emaSeconds as number
+  assert.ok(Math.abs(afterOutlierEma - 22.5) < 1e-9)
 
-  for (let i = 0; i < testWindow * 2; i++) feed(estimator, clock, 10, 'good')
-  const after = estimator.getRate()
-  assert.ok(Math.abs(after - before) / before < 0.1, `rate ${after} did not recover close to ${before}`)
+  const recoverySamples = testWindow * 2
+  for (let i = 0; i < recoverySamples; i++) feed(estimator, clock, 10, 'good')
+
+  // Each ordinary post-outlier sample moves emaSeconds by exactly alpha
+  // toward 10, so after k samples emaSeconds = 10 + (afterOutlierEma-10)*(1-alpha)^k.
+  const expectedEma = 10 + (afterOutlierEma - 10) * Math.pow(1 - testAlpha, recoverySamples)
+  assert.ok(
+    Math.abs((estimator.rates.emaSeconds as number) - expectedEma) < 1e-9,
+    `emaSeconds ${estimator.rates.emaSeconds} !== ${expectedEma}`
+  )
+  const expectedRate = 1 / Math.max(expectedEma, 1)
+  assert.ok(Math.abs(estimator.getRate() - expectedRate) < 1e-9)
 })
 
-test('a capped outlier sample still counts as one ordinary sample (regression for capped-but-uncounted bug)', () => {
-  // Regression guard: applyRateSample used to do
-  // `state.weightedCount += withinCutoff ? 1 : 0`, so a dt over
-  // reviewTimeCutoff added capped time with NO matching count, starving the
-  // rate. It must now always add exactly 1 to weightedCount, capped or not.
+test('a capped outlier sample blends in exactly alpha*cutoff + (1-alpha)*previous', () => {
+  // Regression guard for the old two-accumulator design, where a capped dt
+  // added weighted time but (via a separate bug) sometimes failed to add a
+  // matching weighted count. That whole bug class is structurally impossible
+  // now - there's no separate count - but the capped value must still land
+  // exactly on the standard EMA blend, not something ad hoc.
   const clock = fakeClock(0)
-  const decay = (testWindow - 1) / (testWindow + 1) // (7-1)/(7+1) = 0.75
   const cutoff = 60
-  const estimator = new Estimator({ reviewTimeCutoff: cutoff, emaWindowSamples: testWindow, rates: { weightedTime: 100, weightedCount: 10 } })
+  const estimator = new Estimator({ reviewTimeCutoff: cutoff, emaWindowSamples: testWindow, rates: { emaSeconds: 100 } })
 
   feed(estimator, clock, 1000, 'good') // dt >> cutoff, so cappedDt = 60
 
-  const expectedWeightedTime = 100 * decay + 60 // 135
-  const expectedWeightedCount = 10 * decay + 1 // 8.5 (old buggy code: 10*decay+0 = 7.5)
-  const expectedRate = expectedWeightedCount / expectedWeightedTime // 8.5/135
+  const expectedEma = testAlpha * 60 + (1 - testAlpha) * 100 // 90
+  assert.ok(Math.abs((estimator.rates.emaSeconds as number) - expectedEma) < 1e-9)
+  assert.ok(Math.abs(estimator.getRate() - 1 / Math.max(expectedEma, 1)) < 1e-9)
+})
 
-  assert.ok(Math.abs(estimator.rates.weightedTime - expectedWeightedTime) < 1e-9)
-  assert.ok(Math.abs(estimator.rates.weightedCount - expectedWeightedCount) < 1e-9)
-  assert.ok(Math.abs(estimator.getRate() - expectedRate) < 1e-9, `rate ${estimator.getRate()} !== ${expectedRate}`)
+test('newest sample has a constant alpha weight regardless of prior sample count', () => {
+  // The bug this whole redesign fixes: under the old ratio-of-two-decayed-
+  // accumulators design, a newest sample's effective weight in the average
+  // started at 100% and only slowly decayed toward its steady-state share
+  // over ~N samples, no matter how large N was. A standard single-value EMA
+  // has a constant per-step weight of exactly alpha from the very first
+  // blended sample onward - prove the step size a single differing sample
+  // produces is identical whether it lands on sample #2 or sample #52.
+  const seedDt = 10
+  const newDt = 50
+
+  const clockShort = fakeClock(0)
+  const shortEstimator = newEstimator(1e9)
+  feed(shortEstimator, clockShort, seedDt, 'good') // seeds emaSeconds = 10
+  const shortBefore = shortEstimator.rates.emaSeconds as number
+  feed(shortEstimator, clockShort, newDt, 'good')
+  const shortStep = Math.abs((shortEstimator.rates.emaSeconds as number) - shortBefore)
+
+  const clockLong = fakeClock(0)
+  const longEstimator = newEstimator(1e9)
+  feed(longEstimator, clockLong, seedDt, 'good') // seeds emaSeconds = 10
+  for (let i = 0; i < 50; i++) feed(longEstimator, clockLong, seedDt, 'good') // identical-dt "history"
+  const longBefore = longEstimator.rates.emaSeconds as number
+  feed(longEstimator, clockLong, newDt, 'good')
+  const longStep = Math.abs((longEstimator.rates.emaSeconds as number) - longBefore)
+
+  assert.ok(Math.abs(shortBefore - longBefore) < 1e-9, 'both should be at the seeded/converged value of 10 before the perturbation')
+  const expectedStep = testAlpha * Math.abs(newDt - shortBefore)
+  assert.ok(Math.abs(shortStep - expectedStep) < 1e-9, `shortStep ${shortStep} !== ${expectedStep}`)
+  assert.ok(Math.abs(longStep - expectedStep) < 1e-9, `longStep ${longStep} !== ${expectedStep}`)
+  assert.equal(shortStep, longStep, 'step size must not depend on how many prior samples exist')
 })
 
 test('lrn-only remaining reviews produce a non-zero ETA', () => {
-  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { weightedTime: 10, weightedCount: 1 } })
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 10 } })
   const eta = estimator.getRemainingTime({ nu: 0, lrn: 5, rev: 0 })
   assert.notEqual(eta, 0)
   assert.equal(eta, 50)
 })
 
 test('getRemainingTime divides total remaining by the single blended rate', () => {
-  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { weightedTime: 20, weightedCount: 4 } })
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 5 } })
   const eta = estimator.getRemainingTime({ nu: 3, lrn: 2, rev: 5 })
   assert.equal(eta, 50)
 })
 
 test('undo() is the exact inverse of update() for the single rate', () => {
   const clock = fakeClock(0)
-  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { weightedTime: 5, weightedCount: 0.5 } })
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 10 } })
   const before = { ...estimator.rates }
 
   feed(estimator, clock, 8, 'new')
-  assert.notEqual(estimator.rates.weightedTime, before.weightedTime)
+  assert.notEqual(estimator.rates.emaSeconds, before.emaSeconds)
 
   estimator.undo()
-  assert.ok(Math.abs(estimator.rates.weightedTime - before.weightedTime) < 1e-9)
-  assert.ok(Math.abs(estimator.rates.weightedCount - before.weightedCount) < 1e-9)
+  assert.ok(Math.abs((estimator.rates.emaSeconds as number) - (before.emaSeconds as number)) < 1e-9)
 })
 
-test('resetRates() zeroes the rate accumulator', () => {
-  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { weightedTime: 42, weightedCount: 7 } })
+test('undo() of the very first-ever sample resets emaSeconds back to null', () => {
+  const clock = fakeClock(0)
+  const estimator = newEstimator(1e9)
+  assert.equal(estimator.rates.emaSeconds, null)
+
+  feed(estimator, clock, 8, 'new')
+  assert.notEqual(estimator.rates.emaSeconds, null)
+
+  estimator.undo()
+  assert.equal(estimator.rates.emaSeconds, null)
+})
+
+test('resetRates() nulls the rate accumulator', () => {
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 42 } })
   estimator.resetRates()
-  assert.equal(estimator.rates.weightedTime, 0)
-  assert.equal(estimator.rates.weightedCount, 0)
+  assert.equal(estimator.rates.emaSeconds, null)
 })

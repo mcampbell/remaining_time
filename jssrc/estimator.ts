@@ -18,6 +18,16 @@ export interface LogEntry {
   dt: number;
   logType: InstLogType;
   reviewHash: number | null; // May be null to save spaces on ankidroid
+  // Whether this entry was the one that seeded rates.emaSeconds (i.e.
+  // rates.emaSeconds was null immediately before it). Not persisted - a
+  // deserialized entry always reports false, since by the time logs are
+  // reloaded the associated rate (persisted separately, deck-scoped) has
+  // already been seeded in a prior sitting in every realistic case. Undoing
+  // a deserialized entry that happens to be the true all-time first sample
+  // is the one edge case this gets wrong (reverseRateSample will blend-invert
+  // instead of resetting to null) - deliberately accepted, since undoing a
+  // review from a previous Anki session is already an edge case.
+  wasSeed: boolean;
 }
 
 const ESTIMATOR_SCHEMA_VERSION = 5
@@ -60,8 +70,8 @@ function deserializeLogs (s: unknown[], cursor: number, startTime: number): { lo
     const logType = logTypeCodes[s[cursor++] as number]
     epoch += dt
     // Patched in below for the persisted tail; older entries never have
-    // their reviewHash read.
-    logs.push({ epoch, dt, logType, reviewHash: null })
+    // their reviewHash read. wasSeed is never persisted - see LogEntry.
+    logs.push({ epoch, dt, logType, reviewHash: null, wasSeed: false })
   }
 
   const tailCount = s[cursor++] as number
@@ -85,30 +95,32 @@ interface EstimatorInitializer {
 }
 
 export function emptyRateState (): RateState {
-  return { weightedTime: 0, weightedCount: 0 }
+  return { emaSeconds: null }
 }
 
 export class Estimator {
   logs: LogEntry[] = []
-  // A pure exponential smoother's raw accumulator (decayed weighted
-  // seconds / decayed weighted count), blended across every answered card
-  // regardless of new/lrn/rev or which sitting it happened in. This is the
-  // same object the persisted per-deck rate is loaded into and saved from
-  // (see updater.ts) - there's no separate "seed" concept blended in
-  // through a second, differently-tuned smoother; continuing to decay this
-  // state across a sitting boundary *is* how the rate persists.
+  // A standard single-value EMA of seconds-per-card, blended across every
+  // answered card regardless of new/lrn/rev or which sitting it happened
+  // in. This is the same object the persisted per-deck rate is loaded into
+  // and saved from (see updater.ts) - continuing to update this state
+  // across a sitting boundary *is* how the rate persists.
   rates: RateState
 
   private startTime = now()
   private reviewTimeCutoff: number
-  // Short-window EMA: emaWindowSamples samples of memory, decay = (N-1)/(N+1).
-  private historyDecay: number
+  // Standard EMA step size: alpha = 2/(N+1) for an N-sample window. Every
+  // sample after the seed moves emaSeconds by exactly this fraction toward
+  // the new value, regardless of how many samples came before - unlike a
+  // ratio-of-two-decayed-accumulators design, there's no warm-up period
+  // where an early sample carries more than its steady-state weight.
+  private historyAlpha: number
   // eslint-disable-next-line no-use-before-define
   private static cache: Estimator | null = null
 
   constructor (args: EstimatorInitializer) {
     this.reviewTimeCutoff = args.reviewTimeCutoff
-    this.historyDecay = (args.emaWindowSamples - 1) / (args.emaWindowSamples + 1)
+    this.historyAlpha = 2 / (args.emaWindowSamples + 1)
     this.rates = args.rates
   }
 
@@ -139,28 +151,31 @@ export class Estimator {
    * Folds one sample into the blended running pace. dt is the raw elapsed
    * time between this card and the previous one - nothing else is folded
    * in. Clamped to reviewTimeCutoff (a real gap longer than that is
-   * scheduler/AFK wait time, not review pace) but still counted as one
-   * ordinary sample of that clamped duration - crediting only the capped
-   * time without incrementing the count would silently starve the rate
-   * for that instant (time added, nothing to show for it), spiking the
-   * displayed ETA right after any long gap.
+   * scheduler/AFK wait time, not review pace). Returns whether this sample
+   * seeded emaSeconds (it was null beforehand), so update() can record that
+   * on the log entry for undo to invert correctly.
    */
-  private applyRateSample (dt: number) {
+  private applyRateSample (dt: number): boolean {
     const state = this.rates
     const cappedDt = Math.min(dt, this.reviewTimeCutoff)
-    const oldWeightedTime = state.weightedTime
-    const oldWeightedCount = state.weightedCount
-    state.weightedTime = state.weightedTime * this.historyDecay + cappedDt
-    state.weightedCount = state.weightedCount * this.historyDecay + 1
-    debugLog(`[applyRateSample] dt ${dt}, weightedTime ${oldWeightedTime} -> ${state.weightedTime}, weightedCount ${oldWeightedCount} -> ${state.weightedCount}`)
+    const wasSeed = state.emaSeconds === null
+    const oldEmaSeconds = state.emaSeconds
+    state.emaSeconds = wasSeed
+      ? cappedDt
+      : this.historyAlpha * cappedDt + (1 - this.historyAlpha) * (state.emaSeconds as number)
+    debugLog(`[applyRateSample] dt ${dt}, emaSeconds ${oldEmaSeconds} -> ${state.emaSeconds}`)
+    return wasSeed
   }
 
   /** Exact inverse of applyRateSample, for undo. */
-  private reverseRateSample (dt: number) {
+  private reverseRateSample (dt: number, wasSeed: boolean) {
     const state = this.rates
+    if (wasSeed) {
+      state.emaSeconds = null
+      return
+    }
     const cappedDt = Math.min(dt, this.reviewTimeCutoff)
-    state.weightedTime = (state.weightedTime - cappedDt) / this.historyDecay
-    state.weightedCount = (state.weightedCount - 1) / this.historyDecay
+    state.emaSeconds = ((state.emaSeconds as number) - this.historyAlpha * cappedDt) / (1 - this.historyAlpha)
   }
 
   update (reviewHash: number, logType: InstLogType) {
@@ -171,25 +186,25 @@ export class Estimator {
         ? epoch - this.logs[this.logs.length - 1].epoch
         : epoch - this.startTime
 
-    this.applyRateSample(dt)
+    const wasSeed = this.applyRateSample(dt)
 
-    this.logs.push({ reviewHash, epoch, dt, logType })
+    this.logs.push({ reviewHash, epoch, dt, logType, wasSeed })
   }
 
   undo () {
     const removed = this.logs.pop()
     if (!removed) return
 
-    this.reverseRateSample(removed.dt)
+    this.reverseRateSample(removed.dt, removed.wasSeed)
   }
 
   /** Cards/sec pace, blended across every answered card. */
   getRate () {
-    const { weightedTime, weightedCount } = this.rates
+    const { emaSeconds } = this.rates
     // No persisted history and no real data yet - nothing to compute from.
-    if (weightedTime <= 0) return minimumRate
-    if (weightedTime < 1) return 1
-    return Math.max(weightedCount / weightedTime, minimumRate)
+    if (emaSeconds === null) return minimumRate
+    // Guard against an absurd rate if a sample's dt was near-zero.
+    return 1 / Math.max(emaSeconds, 1)
   }
 
   /** Total remaining count (new + lrn + rev), divided by the blended pace. */
