@@ -30,7 +30,7 @@ export interface LogEntry {
   wasSeed: boolean;
 }
 
-const ESTIMATOR_SCHEMA_VERSION = 5
+const ESTIMATOR_SCHEMA_VERSION = 6
 
 // How many of the most recent log entries keep their reviewHash on
 // serialization. Only mobileReviewLogger ever reads a persisted reviewHash
@@ -91,6 +91,7 @@ export const kRtEstimatorSchema = '__rt__estimator__schema__'
 interface EstimatorInitializer {
   reviewTimeCutoff: number;
   emaWindowSamples: number;
+  sharedETACalc: boolean;
   rates: RateState;
 }
 
@@ -101,11 +102,18 @@ export function emptyRateState (): RateState {
 export class Estimator {
   logs: LogEntry[] = []
   // A standard single-value EMA of seconds-per-card, blended across every
-  // answered card regardless of new/lrn/rev or which sitting it happened
-  // in. This is the same object the persisted per-deck rate is loaded into
-  // and saved from (see updater.ts) - continuing to update this state
-  // across a sitting boundary *is* how the rate persists.
+  // answered card regardless of new/lrn/rev. Whether this is scoped to the
+  // current deck (persisted per-deck, see updater.ts) or to the whole
+  // sitting (persisted alongside logs/startTime, immune to which subdeck
+  // each card happens to belong to) is decided by sharedETACalc.
   rates: RateState
+
+  // Whether the rate is shared across every deck in this sitting (immune to
+  // per-card deck-switching, e.g. reviewing a large parent deck spanning
+  // many subdecks) rather than scoped to whichever deck the current card
+  // belongs to. Read by updater.ts/barRender to decide whether the per-deck
+  // store is still the right place to read/write the rate.
+  readonly sharedETACalc: boolean
 
   private startTime = now()
   private reviewTimeCutoff: number
@@ -121,6 +129,7 @@ export class Estimator {
   constructor (args: EstimatorInitializer) {
     this.reviewTimeCutoff = args.reviewTimeCutoff
     this.historyAlpha = 2 / (args.emaWindowSamples + 1)
+    this.sharedETACalc = args.sharedETACalc
     this.rates = args.rates
   }
 
@@ -136,8 +145,9 @@ export class Estimator {
   reset () {
     this.logs = []
     this.startTime = now()
-    // this.rates is deliberately left untouched - it's the deck's long-run
-    // learned pace, not sitting-scoped state.
+    // this.rates is deliberately left untouched - it's long-run learned
+    // pace (per-deck, or for the whole sitting under sharedETACalc), not
+    // scoped to the log being cleared here.
   }
 
   // Aggressive counterpart to reset(), used only by the manual reset button:
@@ -215,8 +225,10 @@ export class Estimator {
   }
 
   save () {
-    // serialize
-    const s: unknown[] = [ESTIMATOR_SCHEMA_VERSION, this.startTime]
+    // serialize. rates.emaSeconds is always included regardless of
+    // sharedETACalc (harmless either way) - only instance()'s decision of
+    // whether to actually USE it on load is gated by the config.
+    const s: unknown[] = [ESTIMATOR_SCHEMA_VERSION, this.rates.emaSeconds, this.startTime]
     s.push(...serializeLogs(this.logs))
 
     const storage = (isAnkiDroid()) ? localStorage : ankiPersistentStorage
@@ -235,12 +247,18 @@ export class Estimator {
     const content = await storage.getItem(kRtEstimatorSchema)
     const reviewTimeCutoff = (await getAddonConfig('reviewTimeCutoff')) as number
     const emaWindowSamples = (await getAddonConfig('emaWindowSamples')) as number
+    const sharedETACalc = (await getAddonConfig('sharedETACalc')) as boolean
 
     const deckName = await getCurrentDeckName()
-    const persistedRates = deckName ? await getDeckRates(deckName) : null
-    const rates: RateState = persistedRates?.rate ?? emptyRateState()
+    const persistedDeckRates = deckName ? await getDeckRates(deckName) : null
+    // Per-deck seed: used outright when sharedETACalc is off (today's
+    // upstream-compatible behavior - a per-card-deck-scoped rate, which can
+    // fragment badly across many small buckets when reviewing a parent deck
+    // spanning lots of subdecks), or as a brand-new-sitting seed when
+    // sharedETACalc is on and no sitting rate has been recorded yet.
+    const deckSeedRates: RateState = persistedDeckRates?.rate ?? emptyRateState()
 
-    if (!content) Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates })
+    if (!content) Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, sharedETACalc, rates: deckSeedRates })
     else {
       try {
         const s = JSON.parse(pakob64Inflate(content))
@@ -248,7 +266,12 @@ export class Estimator {
         if (s[cursor++] !== ESTIMATOR_SCHEMA_VERSION) {
           throw new Error('Old schema')
         }
-        const obj = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates })
+        const sittingEmaSeconds = s[cursor++] as number | null
+        // Once a sitting's own rate exists, sharedETACalc always prefers it
+        // over the per-deck seed - that's what keeps it continuous across a
+        // sitting regardless of which subdeck each card belongs to.
+        const rates: RateState = sharedETACalc ? { emaSeconds: sittingEmaSeconds } : deckSeedRates
+        const obj = new Estimator({ reviewTimeCutoff, emaWindowSamples, sharedETACalc, rates })
         obj.startTime = s[cursor++]
         const deserialized = deserializeLogs(s, cursor, obj.startTime)
         obj.logs = deserialized.logs
@@ -260,7 +283,7 @@ export class Estimator {
         // re-update elapsed time
         Estimator.cache = obj
       } catch {
-        Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates })
+        Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, sharedETACalc, rates: deckSeedRates })
       }
     }
     return Estimator.cache

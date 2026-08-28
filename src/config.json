@@ -4,6 +4,7 @@
   "autoResetIdleSeconds": 18000,
   "reviewTimeCutoff": 300,
   "emaWindowSamples": 60,
+  "sharedETACalc": false,
   "resetHotkey": "",
   "runOnMobile": false,
   "fixedSegmentWidth": false,

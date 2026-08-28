@@ -34,8 +34,12 @@ export async function updateEstimator () {
   }
   estimator.save()
 
+  // Under sharedETACalc the rate is already fully persisted via
+  // estimator.save() above (part of the sitting's own blob) - writing it to
+  // the CURRENT CARD's deck bucket here would just be per-card noise, since
+  // nothing reads it back while sharedETACalc is on.
   const anyUpdated = instructions.some(instruction => instruction.instType === RCCTConst.UPDATE)
-  if (anyUpdated) {
+  if (anyUpdated && !estimator.sharedETACalc) {
     const deckName = await getCurrentDeckName()
     if (deckName) {
       await saveDeckRates(deckName, { rate: estimator.rates })
