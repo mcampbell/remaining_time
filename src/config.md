@@ -37,13 +37,14 @@ Number of recent card answers the "time per card" estimate is smoothed over. A b
 
 Hotkey for reset button.
 
-## messageFormat (default: `"Elapsed %(elapsedTime),  Remaining %(remainingTime), ETA %(ETA)"`)
+## messageFormat (default: `"Elapsed %(elapsedTime),  Remaining %(remainingTime), ETA %(ETA), %(timePerCard)/card"`)
 
 Format the messages. `%(variableName)` gets replaced to values below
 
 - `%(elapsedTime)`: Elapse time since the start of the reviews.
 - `%(remainingTime)`: Estimated remaining time.
 - `%(totalTime)`: `elapsedTime + remainingTime`
+- `%(timePerCard)`: Estimated time to answer one card, based on the same blended pace used for the ETA.
 - `%(CPM)`: Cards per minute.
 - `%(ETA)`: Estimated time arrival. Expected review finish time
 - `%(ETA12)`: Same as `ETA`, except that it's in 12-hour format (ex: `12:00 PM`)

@@ -8,6 +8,6 @@
   "runOnMobile": false,
   "fixedSegmentWidth": false,
   "confirmReset": true,
-  "messageFormat": "Elapsed %(elapsedTime),  Remaining %(remainingTime), ETA %(ETA)",
+  "messageFormat": "Elapsed %(elapsedTime),  Remaining %(remainingTime), ETA %(ETA), %(timePerCard)/card",
   "barCSS": ""
 }
