@@ -2,14 +2,13 @@ import { callPyFunc } from './pyfunc'
 import ankiPersistentStorage from './ankiPersistentStorage'
 import { isAnkiDroid, getAnkiDroidApi } from './apiAnkiDroid'
 
-// A category's running pace as a pure exponential smoother's raw
-// accumulator (decayed weighted seconds / decayed weighted count), rather
-// than a plain rate number - keeping both halves lets a fresh sitting keep
-// decaying this exact state instead of re-blending a derived rate through a
-// second, separately-tuned smoother.
+// A standard single-value EMA of seconds-per-card: emaSeconds = alpha*dt +
+// (1-alpha)*emaSeconds. null means no sample has ever been folded in yet
+// (nothing to seed from) - the first real sample sets emaSeconds directly
+// rather than blending against a fake zero/undefined baseline, so a fresh
+// deck's very first card doesn't bias every estimate after it.
 export interface RateState {
-  weightedTime: number;
-  weightedCount: number;
+  emaSeconds: number | null;
 }
 
 export interface DeckRates {
@@ -35,8 +34,7 @@ function isRateState (value: unknown): value is RateState {
   return (
     typeof value === 'object' &&
     value !== null &&
-    typeof (value as RateState).weightedTime === 'number' &&
-    typeof (value as RateState).weightedCount === 'number'
+    (typeof (value as RateState).emaSeconds === 'number' || (value as RateState).emaSeconds === null)
   )
 }
 
@@ -45,8 +43,9 @@ function sanitizeDeckRates (raw: unknown): DeckRates {
   if (typeof raw !== 'object' || raw === null) return {}
 
   const { rate } = raw as DeckRates
-  // old per-category schema (`{new, rev}` instead of `{rate}`) -> treat as
-  // no persisted rate, same defensive spirit as the raw-number case above.
+  // old per-category schema (`{new, rev}`) or old two-accumulator schema
+  // (`{weightedTime, weightedCount}`) -> treat as no persisted rate, same
+  // defensive spirit as the raw-number case above.
   return { rate: isRateState(rate) ? rate : undefined }
 }
 
