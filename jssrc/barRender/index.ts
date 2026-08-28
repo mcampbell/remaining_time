@@ -45,9 +45,11 @@ async function updateDOM (svgHtml: string, progressBarMessage: string) {
       const estimator = await Estimator.instance()
       estimator.reset()
       estimator.resetRates()
-      const deckName = await getCurrentDeckName()
-      if (deckName) {
-        await saveDeckRates(deckName, { rate: emptyRateState() })
+      if (!estimator.sharedETACalc) {
+        const deckName = await getCurrentDeckName()
+        if (deckName) {
+          await saveDeckRates(deckName, { rate: emptyRateState() })
+        }
       }
       estimator.save()
       renderProgressBar()
