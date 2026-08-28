@@ -21,6 +21,10 @@ export async function getMessage (estimator: Estimator, remainingReviews: Remain
   const elapsedTime = estimator.elapsedTime
   const remainingTime = estimator.getRemainingTime(remainingReviews)
   const totalTime = elapsedTime + remainingTime
+  // The pace actually driving remainingTime/ETA above - the inverse of the
+  // same blended EMA rate - unlike CPM, which is an unrelated whole-sitting
+  // average.
+  const timePerCard = 1 / estimator.getRate()
   // Actual observed pace this sitting - cards answered per minute - rather
   // than any one category's rate.
   const CPM = (elapsedTime > 0 ? (estimator.logs.length / elapsedTime) * 60 : 0).toFixed(2)
@@ -37,6 +41,7 @@ export async function getMessage (estimator: Estimator, remainingReviews: Remain
   message = message.replace('%(elapsedTime)', t2s(elapsedTime))
   message = message.replace('%(remainingTime)', t2s(remainingTime))
   message = message.replace('%(totalTime)', t2s(totalTime))
+  message = message.replace('%(timePerCard)', t2s(timePerCard))
   message = message.replace('%(ETA)', ETAString24)
   message = message.replace('%(ETA12)', ETAString12)
   message = message.replace('%(CPM)', CPM)
