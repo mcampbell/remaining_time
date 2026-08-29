@@ -192,3 +192,13 @@ test('save() includes rates.emaSeconds in its serialized payload regardless of s
     assert.equal(s[1], 12.3, `sharedETACalc=${sharedETACalc}: emaSeconds not persisted in slot 1`)
   }
 })
+
+test('save() serializes a null emaSeconds without throwing (manual reset path)', () => {
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds: 42 } })
+  estimator.resetRates()
+  lastSavedPayload = null
+  assert.doesNotThrow(() => estimator.save())
+  assert.ok(lastSavedPayload, 'save() should have written a payload')
+  const s = JSON.parse(pakob64Inflate(lastSavedPayload as string))
+  assert.equal(s[1], null, 'null emaSeconds should round-trip as null in slot 1')
+})

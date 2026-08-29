@@ -235,7 +235,7 @@ export class Estimator {
     storage.setItem(
       kRtEstimatorSchema,
       pakob64Deflate(JSON.stringify(s, function (_key, val) {
-        return val.toFixed ? Number(val.toFixed(1)) : val
+        return typeof val === 'number' ? Number(val.toFixed(1)) : val
       }))
     )
   }
