@@ -214,13 +214,13 @@ export class Estimator {
     )
   }
 
-  save () {
+  async save () {
     // serialize. rates.emaSeconds is the sitting's single shared rate.
     const s: unknown[] = [ESTIMATOR_SCHEMA_VERSION, this.rates.emaSeconds, this.startTime]
     s.push(...serializeLogs(this.logs))
 
     const storage = (isAnkiDroid()) ? localStorage : ankiPersistentStorage
-    storage.setItem(
+    await storage.setItem(
       kRtEstimatorSchema,
       pakob64Deflate(JSON.stringify(s, function (_key, val) {
         return typeof val === 'number' ? Number(val.toFixed(1)) : val

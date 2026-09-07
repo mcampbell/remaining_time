@@ -173,22 +173,38 @@ test('resetRates() nulls the rate accumulator', () => {
   assert.equal(estimator.rates.emaSeconds, null)
 })
 
-test('save() includes rates.emaSeconds in its serialized payload', () => {
+test('save() includes rates.emaSeconds in its serialized payload', async () => {
   const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 12.3 } })
   lastSavedPayload = null
-  estimator.save()
+  await estimator.save()
   assert.ok(lastSavedPayload, 'save() should have written a payload')
   const s = JSON.parse(pakob64Inflate(lastSavedPayload as string))
   // Serialized shape: [ESTIMATOR_SCHEMA_VERSION, rates.emaSeconds, startTime, ...logs]
   assert.equal(s[1], 12.3, 'emaSeconds not persisted in slot 1')
 })
 
-test('save() serializes a null emaSeconds without throwing (manual reset path)', () => {
+test('save() serializes a null emaSeconds without throwing (manual reset path)', async () => {
   const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 42 } })
   estimator.resetRates()
   lastSavedPayload = null
-  assert.doesNotThrow(() => estimator.save())
+  await assert.doesNotReject(() => estimator.save())
   assert.ok(lastSavedPayload, 'save() should have written a payload')
   const s = JSON.parse(pakob64Inflate(lastSavedPayload as string))
   assert.equal(s[1], null, 'null emaSeconds should round-trip as null in slot 1')
+})
+
+test('save() awaits the underlying storage write before resolving', async () => {
+  let writeCompleted = false
+  const originalSetItem = ankiPersistentStorage.setItem
+  ankiPersistentStorage.setItem = async (key: string, data: string) => {
+    await new Promise(resolve => setTimeout(resolve, 0))
+    writeCompleted = true
+  }
+  try {
+    const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: null } })
+    await estimator.save()
+    assert.ok(writeCompleted, 'save() should not resolve until storage.setItem completes')
+  } finally {
+    ankiPersistentStorage.setItem = originalSetItem
+  }
 })

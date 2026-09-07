@@ -31,5 +31,5 @@ export async function updateEstimator () {
     await debugLog(`[updateEstimator] new instruction: ${JSON.stringify(instruction)}`)
     applyInstruction(estimator, instruction)
   }
-  estimator.save()
+  await estimator.save()
 }

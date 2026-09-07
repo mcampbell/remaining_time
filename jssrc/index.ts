@@ -47,7 +47,7 @@ async function resetEstimatorIfIdle () {
   const estimator = await Estimator.instance()
   if (now() - estimator.lastActivityEpoch > idleThreshold) {
     estimator.reset()
-    estimator.save()
+    await estimator.save()
   }
 }
 

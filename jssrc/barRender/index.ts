@@ -44,8 +44,8 @@ async function updateDOM (svgHtml: string, progressBarMessage: string) {
       const estimator = await Estimator.instance()
       estimator.reset()
       estimator.resetRates()
-      estimator.save()
-      renderProgressBar()
+      await estimator.save()
+      await renderProgressBar()
     }
   }
   (window as any)._3cc745f46701204a_click_reset_progress_bar = handler
