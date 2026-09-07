@@ -35,7 +35,7 @@ const testWindow = 7
 const testAlpha = 2 / (testWindow + 1) // 0.25
 
 function newEstimator (reviewTimeCutoff: number) {
-  return new Estimator({ reviewTimeCutoff, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds: null } })
+  return new Estimator({ reviewTimeCutoff, emaWindowSamples: testWindow, rates: { emaSeconds: null } })
 }
 
 function feed (estimator: Estimator, clock: { advance: (dt: number) => void }, dt: number, logType: InstLogType) {
@@ -88,7 +88,7 @@ test('a capped outlier sample blends in exactly alpha*cutoff + (1-alpha)*previou
   // exactly on the standard EMA blend, not something ad hoc.
   const clock = fakeClock(0)
   const cutoff = 60
-  const estimator = new Estimator({ reviewTimeCutoff: cutoff, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds: 100 } })
+  const estimator = new Estimator({ reviewTimeCutoff: cutoff, emaWindowSamples: testWindow, rates: { emaSeconds: 100 } })
 
   feed(estimator, clock, 1000, 'good') // dt >> cutoff, so cappedDt = 60
 
@@ -131,21 +131,21 @@ test('newest sample has a constant alpha weight regardless of prior sample count
 })
 
 test('lrn-only remaining reviews produce a non-zero ETA', () => {
-  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds: 10 } })
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 10 } })
   const eta = estimator.getRemainingTime({ nu: 0, lrn: 5, rev: 0 })
   assert.notEqual(eta, 0)
   assert.equal(eta, 50)
 })
 
 test('getRemainingTime divides total remaining by the single blended rate', () => {
-  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds: 5 } })
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 5 } })
   const eta = estimator.getRemainingTime({ nu: 3, lrn: 2, rev: 5 })
   assert.equal(eta, 50)
 })
 
 test('undo() is the exact inverse of update() for the single rate', () => {
   const clock = fakeClock(0)
-  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds: 10 } })
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 10 } })
   const before = { ...estimator.rates }
 
   feed(estimator, clock, 8, 'new')
@@ -168,33 +168,23 @@ test('undo() of the very first-ever sample resets emaSeconds back to null', () =
 })
 
 test('resetRates() nulls the rate accumulator', () => {
-  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds: 42 } })
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 42 } })
   estimator.resetRates()
   assert.equal(estimator.rates.emaSeconds, null)
 })
 
-test('sharedETACalc is threaded through the constructor as-given', () => {
-  const shared = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc: true, rates: { emaSeconds: null } })
-  assert.equal(shared.sharedETACalc, true)
-
-  const perDeck = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds: null } })
-  assert.equal(perDeck.sharedETACalc, false)
-})
-
-test('save() includes rates.emaSeconds in its serialized payload regardless of sharedETACalc', () => {
-  for (const sharedETACalc of [false, true]) {
-    const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc, rates: { emaSeconds: 12.3 } })
-    lastSavedPayload = null
-    estimator.save()
-    assert.ok(lastSavedPayload, 'save() should have written a payload')
-    const s = JSON.parse(pakob64Inflate(lastSavedPayload as string))
-    // Serialized shape: [ESTIMATOR_SCHEMA_VERSION, rates.emaSeconds, startTime, ...logs]
-    assert.equal(s[1], 12.3, `sharedETACalc=${sharedETACalc}: emaSeconds not persisted in slot 1`)
-  }
+test('save() includes rates.emaSeconds in its serialized payload', () => {
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 12.3 } })
+  lastSavedPayload = null
+  estimator.save()
+  assert.ok(lastSavedPayload, 'save() should have written a payload')
+  const s = JSON.parse(pakob64Inflate(lastSavedPayload as string))
+  // Serialized shape: [ESTIMATOR_SCHEMA_VERSION, rates.emaSeconds, startTime, ...logs]
+  assert.equal(s[1], 12.3, 'emaSeconds not persisted in slot 1')
 })
 
 test('save() serializes a null emaSeconds without throwing (manual reset path)', () => {
-  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds: 42 } })
+  const estimator = new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds: 42 } })
   estimator.resetRates()
   lastSavedPayload = null
   assert.doesNotThrow(() => estimator.save())

@@ -54,19 +54,9 @@ export async function getDeckRates (deckName: string): Promise<DeckRates | null>
   return store[deckName] ? sanitizeDeckRates(store[deckName]) : null
 }
 
-export async function saveDeckRates (deckName: string, rates: DeckRates): Promise<void> {
-  const store = await getDeckRateStore()
-  store[deckName] = { ...sanitizeDeckRates(store[deckName]), ...rates }
-  await setDeckRateStore(store)
-}
-
 export const kDeckRates = '__rt__deckrates__'
 
 async function getDeckRateStore (): Promise<Record<string, DeckRates>> {
   const s = await ankiPersistentStorage.getItem(kDeckRates)
   return s ? JSON.parse(s) : {}
-}
-
-async function setDeckRateStore (rates: Record<string, DeckRates>): Promise<void> {
-  await ankiPersistentStorage.setItem(kDeckRates, JSON.stringify(rates))
 }
