@@ -7,7 +7,7 @@ import { pakob64Deflate, pakob64Inflate } from './utils/pakob64'
 import { now, RemainingCardCounts } from './utils'
 import { InstLogType } from './reviewLogger/types'
 import { getAddonConfig } from './utils/addonConfig'
-import { getCurrentDeckName, getDeckRates, RateState } from './utils/deckRate'
+import { RateState } from './utils/deckRate'
 import { isAnkiDroid } from './utils/apiAnkiDroid'
 import { debugLog } from './utils/debugLog'
 
@@ -236,14 +236,7 @@ export class Estimator {
     const reviewTimeCutoff = (await getAddonConfig('reviewTimeCutoff')) as number
     const emaWindowSamples = (await getAddonConfig('emaWindowSamples')) as number
 
-    const deckName = await getCurrentDeckName()
-    const persistedDeckRates = deckName ? await getDeckRates(deckName) : null
-    // Seed for a brand-new sitting that hasn't recorded its own rate yet -
-    // once the sitting's own rate exists (below), it always wins, since the
-    // rate is shared across every deck touched in the sitting.
-    const deckSeedRates: RateState = persistedDeckRates?.rate ?? emptyRateState()
-
-    if (!content) Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates: deckSeedRates })
+    if (!content) Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates: emptyRateState() })
     else {
       try {
         const s = JSON.parse(pakob64Inflate(content))
@@ -265,7 +258,7 @@ export class Estimator {
         // re-update elapsed time
         Estimator.cache = obj
       } catch {
-        Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates: deckSeedRates })
+        Estimator.cache = new Estimator({ reviewTimeCutoff, emaWindowSamples, rates: emptyRateState() })
       }
     }
     return Estimator.cache
