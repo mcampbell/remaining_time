@@ -6,6 +6,7 @@ own. `ankiPersistentStorage.py` is the thin Anki-facing wrapper.
 
 import json
 import os
+import time
 
 
 class KVStore:
@@ -31,7 +32,24 @@ class KVStore:
         tmp = self._path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self._cache, f)
-        os.replace(tmp, self._path)  # atomic, so a crash mid-write can't corrupt
+        self._replace(tmp)
+
+    def _replace(self, tmp):
+        # os.replace() is atomic, so a crash mid-write can't corrupt the file.
+        # On Windows it can also raise PermissionError for a moment right
+        # after close(), e.g. antivirus or the search indexer briefly holding
+        # the new .tmp file open. Retry past that transient lock instead of
+        # surfacing every write as a crash.
+        attempts = 5
+        delay = 0.05
+        for attempt in range(attempts):
+            try:
+                os.replace(tmp, self._path)
+                return
+            except PermissionError:
+                if attempt == attempts - 1:
+                    raise
+                time.sleep(delay)
 
     def get(self, key):
         return self._load().get(key, None)
