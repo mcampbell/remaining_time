@@ -433,3 +433,6 @@ meta.json
 
 # JS test compilation output
 dist-test/
+
+# addon-private runtime storage
+src/user_files/
