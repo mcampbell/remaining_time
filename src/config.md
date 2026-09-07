@@ -33,12 +33,6 @@ Use this option to filter out the outliers.
 
 Number of recent card answers the "time per card" estimate is smoothed over. A bigger number reacts more slowly to a change in your pace but is less twitchy/noisy; a smaller number reacts faster but is jumpier. Accepts any positive number (need not be an integer, though in practice it will be).
 
-## sharedETACalc (default: false)
-
-By default, the pace estimate is learned separately per deck (keyed by whichever deck the *current card* belongs to) and persists across sittings - useful if different decks/subjects are genuinely easier or harder. But if you review a parent deck spanning many subdecks, the current-card's deck can change every card, which fragments the estimate into many small, mostly-empty per-subdeck buckets instead of one continuous average - the estimate stops smoothing at all and effectively just shows each card's own raw time.
-
-Set this to `true` to instead track ONE pace shared across every deck touched in the current sitting, persisted with the sitting itself rather than per-deck. Recommended if you regularly review a parent deck covering many subdecks.
-
 ## resetHotkey (default: "")
 
 Hotkey for reset button.

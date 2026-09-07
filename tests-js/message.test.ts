@@ -15,7 +15,7 @@ function stubMessageFormat (messageFormat: string) {
 const testWindow = 7
 
 function estimatorWithRate (emaSeconds: number) {
-  return new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, sharedETACalc: false, rates: { emaSeconds } })
+  return new Estimator({ reviewTimeCutoff: 1e9, emaWindowSamples: testWindow, rates: { emaSeconds } })
 }
 
 test('%(timePerCard) substitutes to t2s(1/getRate())', async () => {
