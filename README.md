@@ -17,6 +17,7 @@ This fork replaces the original addon's remaining-time math with an exponential 
 - Smoothing window is configurable (`emaWindowSamples`).
 - A single slow outlier answer no longer skews the estimate. Each answer's duration is clamped to `reviewTimeCutoff` seconds before it enters the average.
 - Rate tracking is session-wide, not per-deck. Per-deck rate storage was removed.
+- The bar's state (rate, logs, start time) no longer persists across Anki restarts on desktop. It still carries over card-to-card within one Anki sitting, but every fresh launch starts clean.
 
 **Config additions (`src/config.json`):**
 
