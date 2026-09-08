@@ -36,7 +36,7 @@ This fork replaces the original addon's remaining-time math with an exponential 
 - `%(timePerCard)` — estimated seconds per card, from the same EMA that drives the ETA.
 - `%(CPM)` — cards per minute, session average.
 - `%(ETA)` / `%(ETA12)` — clock time you'll finish, in 24h or 12h format.
-- `%(RR)` — retention rate (% of reviews marked correct) for the session.
+- `%(RR)` — retention rate: % of learning/review answers marked correct this session. New cards don't count (AnkiDroid can't read their ease). Shows `N/A` until you've graded at least one.
 
 See `src/config.md` for full details on every option.
 
