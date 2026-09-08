@@ -33,9 +33,12 @@ export async function getMessage (estimator: Estimator, remainingReviews: Remain
   const ETAString24 = (remainingTime >= 86400) ? '> day' : HHmmFormat(ETA)
   const ETAString12 = (remainingTime >= 86400) ? '> day' : HHmmFormat12(ETA)
 
-  const correctRevCount = estimator.logs.filter(x => x.logType === 'rev-good').length
-  const againReviewCount = estimator.logs.filter(x => x.logType === 'rev-again').length
-  const retentionRateString = `${(100 * correctRevCount / (correctRevCount + againReviewCount)).toFixed(1)}%`
+  // Correct/total for learning+review answers. 'new' is excluded: AnkiDroid
+  // can't tell a new card's ease apart (see mobileReviewLogger.ts).
+  const correctCount = estimator.logs.filter(x => x.logType === 'good' || x.logType === 'rev-good').length
+  const incorrectCount = estimator.logs.filter(x => x.logType === 'again' || x.logType === 'rev-again').length
+  const gradedCount = correctCount + incorrectCount
+  const retentionRateString = gradedCount > 0 ? `${(100 * correctCount / gradedCount).toFixed(1)}%` : 'N/A'
 
   let message = (await getAddonConfig()).messageFormat as string
   message = message.replace('%(elapsedTime)', t2s(elapsedTime))
