@@ -31,7 +31,7 @@ export function getSVG (estimator: Estimator, remainingReviews: RemainingCardCou
   let timeSum = 0
   const { logs } = estimator
   for (const { dt } of logs) {
-    timeSum += dt
+    timeSum += Math.min(dt, longSegmentClampMinTime)
   }
 
   for (const log of logs) {
